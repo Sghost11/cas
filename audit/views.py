@@ -1370,10 +1370,7 @@ class AiAuthorizationDashboardView(View):
             if change_request.status == ChangeRequest.STATUS_DEPLOYED:
                 status = "deployed"
                 final_info = f"Despliegue exitoso. {migrated_status}."
-            elif change_request.status in {
-                ChangeRequest.STATUS_FAILED,
-                ChangeRequest.STATUS_REJECTED,
-            }:
+            elif change_request.status == ChangeRequest.STATUS_FAILED:
                 status = "error"
                 if source == "ai" and reason:
                     error = reason
@@ -1381,11 +1378,18 @@ class AiAuthorizationDashboardView(View):
                     error = "Deploy fallido"
                 else:
                     error = "No autorizado por IA"
+            elif change_request.status == ChangeRequest.STATUS_REJECTED:
+                if source == "ai":
+                    status = "no_migrar"
+                    final_info = reason or "IA determino no migrar por politica de seguridad."
+                else:
+                    status = "error"
+                    error = reason or "Cambio rechazado"
             elif change_request.status == ChangeRequest.STATUS_APPROVED:
                 status = "approved"
                 final_info = "Aprobado por IA, pendiente despliegue."
 
-            if deployment and not deployment.success and not error:
+            if status == "error" and deployment and not deployment.success and not error:
                 error = "Deploy fallido"
 
             items.append(
@@ -1430,6 +1434,7 @@ class AiAuthorizationDashboardView(View):
                     "prompt_tokens": total_prompt_tokens,
                     "completion_tokens": total_eval_tokens,
                     "deployed": len([item for item in items if item["status"] == "deployed"]),
+                    "no_migrar": len([item for item in items if item["status"] == "no_migrar"]),
                     "errors": len([item for item in items if item["status"] == "error"]),
                 },
                 "items": items,

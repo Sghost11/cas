@@ -447,6 +447,7 @@ class DeviceOpsUiView(View):
 
       const toneClass = (status) => {
         if (status === 'deployed') return 'analyst';
+        if (status === 'no_migrar') return 'analyst';
         if (status === 'approved') return 'known';
         if (status === 'error' || status === 'rejected') return 'new';
         return 'system';
@@ -459,6 +460,7 @@ class DeviceOpsUiView(View):
           <span class="pill system">Tareas: ${summary.total_tasks || 0}</span>
           <span class="pill ai">Tokens: ${summary.total_tokens || 0}</span>
           <span class="pill analyst">Deploy: ${summary.deployed || 0}</span>
+          <span class="pill analyst">No migrar: ${summary.no_migrar || 0}</span>
           <span class="pill new">Errores: ${summary.errors || 0}</span>
         `;
         const rows = payload.items || [];
