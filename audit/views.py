@@ -16,7 +16,6 @@ from django.views.decorators.csrf import csrf_exempt
 import difflib
 import html
 
-from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -222,17 +221,22 @@ def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bo
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
 
     parsed = None
+    thinking = ""
     try:
         parsed = json.loads(raw)
         reply = parsed.get("response", "")
+        thinking = parsed.get("thinking", "")
     except json.JSONDecodeError:
         reply = raw
 
     max_chars = int(os.environ.get("OLLAMA_LOG_MAX_CHARS", "8000"))
     prompt_max_chars = int(os.environ.get("OLLAMA_PROMPT_LOG_MAX_CHARS", "4000"))
+    thinking_max_chars = int(os.environ.get("OLLAMA_THINKING_LOG_MAX_CHARS", "12000"))
     meta["latency_ms"] = elapsed_ms
     meta["response_truncated"] = len(reply) > max_chars
     meta["raw_response"] = reply[:max_chars]
+    meta["thinking_truncated"] = len(thinking) > thinking_max_chars
+    meta["thinking"] = thinking[:thinking_max_chars]
     meta["prompt_truncated"] = len(prompt) > prompt_max_chars
     meta["prompt"] = prompt[:prompt_max_chars]
     if parsed:
@@ -245,7 +249,8 @@ def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bo
             "eval_duration": parsed.get("eval_duration"),
         }
 
-    verdict = _extract_json_object(reply) or {}
+    verdict_source = reply or thinking
+    verdict = _extract_json_object(verdict_source) or {}
     approve = bool(verdict.get("approve"))
     reason = verdict.get("reason") or "Sin razon detallada."
     return approve, reason, meta
@@ -636,11 +641,7 @@ class ChangeRequestAiApproveDeployBatchView(View):
 
 def _run_ai_batch(request_user=None, progress_callback=None) -> dict:
     today = timezone.localdate()
-    devices = list(
-        Device.objects.filter(Q(last_sync__isnull=True) | Q(last_sync__date__lt=today)).order_by(
-            "id"
-        )
-    )
+    devices = list(Device.objects.order_by("id"))
     results = []
     total = max(len(devices), 1)
 
@@ -656,24 +657,19 @@ def _run_ai_batch(request_user=None, progress_callback=None) -> dict:
                 {"device": device.hostname, "message": "Sincronizando dispositivo"},
             )
         sync_result, _ports = sync_device(device)
-        if sync_result.get("rc") != 0:
-            results.append(
+        sync_ok = sync_result.get("rc") == 0
+        if sync_ok:
+            device.last_sync = timezone.now()
+            device.save(update_fields=["last_sync"])
+        elif progress_callback:
+            progress_callback(
+                min(base_pct + 10, 99),
+                "sync_failed_continue",
                 {
                     "device": device.hostname,
-                    "status": "sync_failed",
-                    "result": sync_result,
-                }
+                    "message": "Sync fallo, continuando con estado en base de datos",
+                },
             )
-            if progress_callback:
-                progress_callback(
-                    min(base_pct + 10, 99),
-                    "sync_failed",
-                    {"device": device.hostname, "message": "Sync fallo"},
-                )
-            continue
-
-        device.last_sync = timezone.now()
-        device.save(update_fields=["last_sync"])
 
         ports = list(Port.objects.filter(device=device).order_by("interface"))
         migrate_ports = [
@@ -689,11 +685,16 @@ def _run_ai_batch(request_user=None, progress_callback=None) -> dict:
                 },
             )
         if not migrate_ports:
+            status = "skipped" if sync_ok else "sync_failed_no_candidates"
             results.append(
                 {
                     "device": device.hostname,
-                    "status": "skipped",
+                    "status": status,
                     "reason": "sin puertos MIGRAR",
+                    "sync": {
+                        "ok": sync_ok,
+                        "result": sync_result,
+                    },
                 }
             )
             if progress_callback:
@@ -739,6 +740,10 @@ def _run_ai_batch(request_user=None, progress_callback=None) -> dict:
                 "change_request": change_request.id,
                 "http_status": status,
                 "result": payload,
+                "sync": {
+                    "ok": sync_ok,
+                    "result": sync_result,
+                },
             }
         )
         if progress_callback:
