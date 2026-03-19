@@ -22,6 +22,11 @@ urlpatterns = [
         name="change_request_ai_approve_deploy",
     ),
     path(
+        "change-requests/<int:pk>/ai-approve-deploy/envelope/",
+        views.ChangeRequestAiApproveDeployEnvelopeView.as_view(),
+        name="change_request_ai_approve_deploy_envelope",
+    ),
+    path(
         "change-requests/ai-approve-deploy/",
         views.ChangeRequestAiApproveDeployBatchView.as_view(),
         name="change_request_ai_approve_deploy_batch",

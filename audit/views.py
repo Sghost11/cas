@@ -3,6 +3,7 @@ import os
 import re
 import socket
 import time
+import uuid
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -629,6 +630,159 @@ class ChangeRequestAiApproveDeployView(View):
         user = request.user if request.user.is_authenticated else None
         payload, status = _ai_approve_and_deploy(change_request, request_user=user)
         return JsonResponse(payload, status=status)
+
+
+def _build_agent_event_list(
+    payload: dict, started_at: str | None, ended_at: str | None
+) -> list[dict]:
+    events: list[dict] = []
+    ai_trace = payload.get("ai_trace") if isinstance(payload.get("ai_trace"), list) else []
+    ai_meta = payload.get("ai_meta") if isinstance(payload.get("ai_meta"), dict) else {}
+    llm_step = 1
+    for item in ai_trace:
+        if not isinstance(item, dict):
+            continue
+        step = item.get("step")
+        ts = item.get("ts")
+        message = item.get("message")
+        if step == "model_inference":
+            events.append(
+                {
+                    "event_type": "llm_start",
+                    "ts": ts,
+                    "payload": {
+                        "step": llm_step,
+                        "model": ai_meta.get("model") or "ollama",
+                        "ai_message": None,
+                        "human_message": message,
+                    },
+                }
+            )
+            llm_step += 1
+        elif step == "model_verdict":
+            ollama_stats = (
+                ai_meta.get("ollama_stats") if isinstance(ai_meta.get("ollama_stats"), dict) else {}
+            )
+            events.append(
+                {
+                    "event_type": "llm_end",
+                    "ts": ts,
+                    "payload": {
+                        "input_tokens": int(ollama_stats.get("prompt_eval_count") or 0),
+                        "output_tokens": int(ollama_stats.get("eval_count") or 0),
+                        "llm_response": ai_meta.get("raw_response") or None,
+                        "thinking": ai_meta.get("thinking") or None,
+                    },
+                }
+            )
+        elif step == "deploy_started":
+            events.append(
+                {
+                    "event_type": "tool_start",
+                    "ts": ts,
+                    "payload": {
+                        "tool_name": "deploy_config",
+                        "tool_call_id": f"deploy-{uuid.uuid4()}",
+                        "input": {
+                            "change_request_id": payload.get("change_request_id"),
+                        },
+                    },
+                }
+            )
+        elif step == "deploy_finished":
+            events.append(
+                {
+                    "event_type": "tool_end",
+                    "ts": ts,
+                    "payload": {
+                        "result": payload.get("result"),
+                        "duration_seconds": None,
+                    },
+                }
+            )
+
+    if not events and started_at:
+        events.append(
+            {
+                "event_type": "llm_start",
+                "ts": started_at,
+                "payload": {
+                    "step": 1,
+                    "model": ai_meta.get("model") if isinstance(ai_meta, dict) else "ollama",
+                    "ai_message": None,
+                    "human_message": "Autorizacion IA",
+                },
+            }
+        )
+        if ended_at:
+            events.append(
+                {
+                    "event_type": "llm_end",
+                    "ts": ended_at,
+                    "payload": {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                    },
+                }
+            )
+
+    return events
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ChangeRequestAiApproveDeployEnvelopeView(View):
+    def post(self, request: HttpRequest, pk: int) -> HttpResponse:
+        change_request = ChangeRequest.objects.get(pk=pk)
+        user = request.user if request.user.is_authenticated else None
+        user_message = "Autorizacion IA para cambio de red"
+        body = request.body.decode("utf-8", errors="ignore").strip()
+        if body:
+            try:
+                data = json.loads(body)
+                maybe_message = (data.get("user_message") or "").strip()
+                if maybe_message:
+                    user_message = maybe_message
+            except json.JSONDecodeError:
+                pass
+
+        payload, status_code = _ai_approve_and_deploy(change_request, request_user=user)
+        ai_meta = payload.get("ai_meta") if isinstance(payload.get("ai_meta"), dict) else {}
+        ai_trace = payload.get("ai_trace") if isinstance(payload.get("ai_trace"), list) else []
+
+        started_at = ai_trace[0].get("ts") if ai_trace and isinstance(ai_trace[0], dict) else None
+        ended_at = ai_trace[-1].get("ts") if ai_trace and isinstance(ai_trace[-1], dict) else None
+        started_dt = _parse_iso_datetime(started_at)
+        ended_dt = _parse_iso_datetime(ended_at)
+        total_minutes = None
+        if started_dt and ended_dt:
+            total_minutes = (ended_dt - started_dt).total_seconds() / 60.0
+
+        ollama_stats = (
+            ai_meta.get("ollama_stats") if isinstance(ai_meta.get("ollama_stats"), dict) else {}
+        )
+        total_input_tokens = int(ollama_stats.get("prompt_eval_count") or 0)
+        total_output_tokens = int(ollama_stats.get("eval_count") or 0)
+
+        final_reply = payload.get("ai_reason") or payload.get("message") or "Proceso finalizado"
+        status_text = "success" if status_code < 400 else "error"
+        error_text = None if status_text == "success" else (payload.get("message") or "Error")
+
+        response_payload = {
+            "id": str(uuid.uuid4()),
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "total_time": total_minutes,
+            "user_message": user_message,
+            "final_reply": final_reply,
+            "status": status_text,
+            "error_text": error_text,
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "events": _build_agent_event_list(
+                {**payload, "change_request_id": change_request.id}, started_at, ended_at
+            ),
+        }
+        return JsonResponse(response_payload, status=status_code)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
