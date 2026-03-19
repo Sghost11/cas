@@ -1,0 +1,14 @@
+condicion,accion,motivo
+"modo access y vlan no documentada",migrar,"candidato a normalizacion 802.1X"
+"equipo no cisco",error,"solo soporta cisco ios"
+"cdp con switch/router",excluir,"enlace crítico"
+"modo trunk",excluir,"no aplica 802.1x"
+"vlan 123 o texto cobas/camara",excluir,terceros
+"vlan 3 con port-security",excluir,"servidores críticos"
+"vlan 12 con speed 100 y duplex full",excluir,"telefonía legacy"
+"vlan 25",excluir,"equipos vitales"
+"vlan documentada de exclusion (25/123)",excluir,"politica de red"
+"mac en lista biomédica",excluir,biomédicos
+"status up y protocol down",revisar,"equipo silencioso"
+"descripción + down + sin cdp",migrar,"ghost port"
+"resto de casos",migrar,"usuario estándar"

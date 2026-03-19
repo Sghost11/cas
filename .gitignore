@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# Local backups and generated artifacts
+backups/
+*.tar
+*.tar.gz
+
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/

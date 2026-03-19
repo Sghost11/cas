@@ -1,0 +1,40 @@
+---
+- name: Deploy config
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Build config block
+      ansible.builtin.set_fact:
+        filtered_lines: >-
+          {{ (config_lines | default([]))
+            | reject('equalto', 'end')
+            | reject('equalto', 'write memory')
+            | list }}
+        cli_payload: >-
+          {{ (['terminal length 0', 'configure terminal']
+            + (config_lines | default([]))
+            | reject('equalto', 'end')
+            | reject('equalto', 'write memory')
+            | list
+            + ['end', 'write memory', 'exit'])
+            | join('\n') }}
+
+    - name: Apply config lines
+      ansible.builtin.shell: |
+        printf '%b' "{{ cli_payload }}\n" | \
+        sshpass -e ssh -tt \
+          -p {{ ansible_port | default(22) }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o KexAlgorithms=+diffie-hellman-group1-sha1 \
+          -o HostKeyAlgorithms=+ssh-rsa \
+          -o Ciphers=+aes128-cbc \
+          {{ ansible_user }}@{{ ansible_host | default(inventory_hostname) }}
+      register: apply_out
+      delegate_to: localhost
+      environment:
+        SSHPASS: "{{ ansible_password }}"
+      no_log: true
+
+    - name: Save config
+      ansible.builtin.raw: "show clock"

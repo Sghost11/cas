@@ -1,0 +1,237 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netauto
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: netauto-secrets
+  namespace: netauto
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "netauto"
+  SWITCH_USER: "admin"
+  SWITCH_PASS: "admin123"
+  NETAUTO_VAULT_PASSWORD: "admin123"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netauto-config
+  namespace: netauto
+data:
+  POSTGRES_DB: "netauto"
+  POSTGRES_USER: "netauto"
+  POSTGRES_HOST: "netauto-postgres"
+  POSTGRES_PORT: "5432"
+  CELERY_BROKER_URL: "amqp://guest:guest@netauto-rabbitmq:5672//"
+  CELERY_RESULT_BACKEND: "rpc://"
+  SWITCH_IPS: "switch-10@192.168.122.10"
+  SWITCH_SITES: "Sura Centro"
+  NETAUTO_INVENTORY: "/app/ansible/inventory/generated.ini"
+  NETAUTO_AUTH_DISABLED: "1"
+  NETAUTO_SEED_DEVICES: "0"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: netauto-postgres-pvc
+  namespace: netauto
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: netauto-postgres
+  namespace: netauto
+spec:
+  serviceName: netauto-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netauto-postgres
+  template:
+    metadata:
+      labels:
+        app: netauto-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: netauto-config
+            - secretRef:
+                name: netauto-secrets
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: netauto-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netauto-postgres
+  namespace: netauto
+spec:
+  selector:
+    app: netauto-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netauto-rabbitmq
+  namespace: netauto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netauto-rabbitmq
+  template:
+    metadata:
+      labels:
+        app: netauto-rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3-management
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5672
+            - containerPort: 15672
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netauto-rabbitmq
+  namespace: netauto
+spec:
+  selector:
+    app: netauto-rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+    - name: mgmt
+      port: 15672
+      targetPort: 15672
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netauto-web
+  namespace: netauto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netauto-web
+  template:
+    metadata:
+      labels:
+        app: netauto-web
+    spec:
+      containers:
+        - name: web
+          image: netauto-web:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: netauto-config
+            - secretRef:
+                name: netauto-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netauto-web
+  namespace: netauto
+spec:
+  selector:
+    app: netauto-web
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      nodePort: 30080
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netauto-worker
+  namespace: netauto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netauto-worker
+  template:
+    metadata:
+      labels:
+        app: netauto-worker
+    spec:
+      containers:
+        - name: worker
+          image: netauto-worker:latest
+          imagePullPolicy: IfNotPresent
+          command: ["celery", "-A", "netauto", "worker", "--loglevel=info"]
+          envFrom:
+            - configMapRef:
+                name: netauto-config
+            - secretRef:
+                name: netauto-secrets
+          env:
+            - name: NETAUTO_RUN_MIGRATIONS
+              value: "0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netauto-lab
+  namespace: netauto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netauto-lab
+  template:
+    metadata:
+      labels:
+        app: netauto-lab
+    spec:
+      containers:
+        - name: lab
+          image: netauto-lab:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "lab.start_lab"]
+          envFrom:
+            - configMapRef:
+                name: netauto-config
+            - secretRef:
+                name: netauto-secrets
+          env:
+            - name: NETAUTO_RUN_MIGRATIONS
+              value: "0"
+            - name: NETAUTO_SEED_DEVICES
+              value: "0"

@@ -1,0 +1,78 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: netauto
+      POSTGRES_USER: netauto
+      POSTGRES_PASSWORD: netauto
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netauto"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  web:
+    image: netauto-web:latest
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: netauto
+      POSTGRES_USER: netauto
+      POSTGRES_PASSWORD: netauto
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+      NETAUTO_INVENTORY: /app/ansible/inventory
+      NETAUTO_SEED_DEVICES: "0"
+      NETAUTO_AUTH_DISABLED: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      lab:
+        condition: service_started
+
+  lab:
+    image: netauto-lab:latest
+    command: ["python", "-m", "lab.start_lab"]
+    network_mode: host
+    environment:
+      POSTGRES_DB: netauto
+      POSTGRES_USER: netauto
+      POSTGRES_PASSWORD: netauto
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+      NETAUTO_RUN_MIGRATIONS: "0"
+      NETAUTO_SEED_DEVICES: "0"
+
+  worker:
+    image: netauto-worker:latest
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: netauto
+      POSTGRES_USER: netauto
+      POSTGRES_PASSWORD: netauto
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+      NETAUTO_INVENTORY: /app/ansible/inventory
+      NETAUTO_AUTH_DISABLED: "1"
+    command: ["celery", "-A", "netauto", "worker", "--loglevel=info"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+volumes:
+  pgdata:

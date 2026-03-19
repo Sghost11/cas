@@ -1,0 +1,11 @@
+{
+  "hostname": "SW-CORE-01",
+  "ports": [
+    {
+      "interface": "Gi1/0/1",
+      "description": "Uplink_Core",
+      "mode": "trunk",
+      "cdp_neighbor": "Switch_Core_02"
+    }
+  ]
+}

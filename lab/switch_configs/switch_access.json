@@ -1,0 +1,11 @@
+{
+  "hostname": "SW-ACCESS-01",
+  "ports": [
+    {
+      "interface": "Gi1/0/10",
+      "description": "Usuario",
+      "mode": "access",
+      "vlan": 10
+    }
+  ]
+}

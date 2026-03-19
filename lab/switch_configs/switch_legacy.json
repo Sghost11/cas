@@ -1,0 +1,13 @@
+{
+  "hostname": "SW-LEGACY-01",
+  "ports": [
+    {
+      "interface": "Gi1/0/20",
+      "description": "Avaya",
+      "mode": "access",
+      "vlan": 12,
+      "speed": "100",
+      "duplex": "full"
+    }
+  ]
+}

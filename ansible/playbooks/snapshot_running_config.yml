@@ -1,0 +1,14 @@
+---
+- name: Snapshot running config
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Show running config
+      ansible.builtin.raw: "show running-config"
+      register: running_config
+
+    - name: Save running config locally
+      ansible.builtin.copy:
+        content: "{{ running_config.stdout }}"
+        dest: "/tmp/{{ inventory_hostname }}-running.txt"
+      delegate_to: localhost

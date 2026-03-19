@@ -1,0 +1,50 @@
+all:
+  vars:
+    ansible_network_os: ios
+    ansible_user: admin
+    ansible_password: !vault |
+      $ANSIBLE_VAULT;1.1;AES256
+      31323031353833646435393735616236373434643031343365343865363830303934643936663730
+      3362623638643738663164306538376666366636313936630a333563366438386631323864633436
+      35306639363038353564663439663338323138636532663538623536393634396134313830313939
+      3339333362393137620a303232396637626462343965353764333866343266333938393366396433
+      3639
+  children:
+    real:
+      hosts:
+        switch-10:
+          ansible_host: 192.168.122.10
+          ansible_port: 22
+          ansible_connection: ssh
+          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa -o Ciphers=+aes128-cbc"
+          ansible_ssh_executable: /usr/bin/ssh
+        switch-20:
+          ansible_host: 192.168.122.20
+          ansible_port: 22
+          ansible_connection: ssh
+          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa -o Ciphers=+aes128-cbc"
+          ansible_ssh_executable: /usr/bin/ssh
+        switch-30:
+          ansible_host: 192.168.122.30
+          ansible_port: 22
+          ansible_connection: ssh
+          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa -o Ciphers=+aes128-cbc"
+          ansible_ssh_executable: /usr/bin/ssh
+        switch-40:
+          ansible_host: 192.168.122.40
+          ansible_port: 22
+          ansible_connection: ssh
+          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa -o Ciphers=+aes128-cbc"
+          ansible_ssh_executable: /usr/bin/ssh
+        switch-50:
+          ansible_host: 192.168.122.50
+          ansible_port: 22
+          ansible_connection: ssh
+          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa -o Ciphers=+aes128-cbc"
+          ansible_ssh_executable: /usr/bin/ssh
+        switch-60:
+          ansible_host: 192.168.122.60
+          ansible_port: 22
+          ansible_connection: ssh
+          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa -o Ciphers=+aes128-cbc"
+          ansible_ssh_executable: /usr/bin/ssh

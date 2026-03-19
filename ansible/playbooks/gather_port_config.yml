@@ -1,0 +1,30 @@
+---
+- name: Gather port configuration
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Show running config
+      ansible.builtin.raw: "show running-config"
+      register: running_config
+
+    - name: Show interface status
+      ansible.builtin.raw: "show interfaces status"
+      register: interfaces_status
+
+    - name: Show CDP neighbors detail
+      ansible.builtin.raw: "show cdp neighbors detail"
+      register: cdp_neighbors
+
+    - name: Show MAC address table
+      ansible.builtin.raw: "show mac address-table"
+      register: mac_table
+
+    - name: Save combined output locally
+      ansible.builtin.copy:
+        content: |
+          {{ running_config.stdout }}
+          {{ interfaces_status.stdout }}
+          {{ cdp_neighbors.stdout }}
+          {{ mac_table.stdout }}
+        dest: "/tmp/{{ inventory_hostname }}-cli.txt"
+      delegate_to: localhost
