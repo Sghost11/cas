@@ -170,6 +170,10 @@ def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bo
         "model": model,
         "base_url": base_url,
     }
+    if num_predict <= 0:
+        meta["num_predict"] = "unlimited"
+    else:
+        meta["num_predict"] = num_predict
 
     port_payload = []
     for port in ports:
@@ -197,16 +201,16 @@ def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bo
         f"{change_request.generated_config}\n"
     )
 
-    payload = json.dumps(
-        {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "num_predict": num_predict,
-            },
+    payload_dict: dict[str, object] = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+    }
+    if num_predict > 0:
+        payload_dict["options"] = {
+            "num_predict": num_predict,
         }
-    ).encode("utf-8")
+    payload = json.dumps(payload_dict).encode("utf-8")
     request = urllib.request.Request(
         f"{base_url}/api/generate",
         data=payload,
@@ -259,7 +263,7 @@ def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bo
         maybe_ollama_stats = meta.get("ollama_stats")
         ollama_stats = maybe_ollama_stats if isinstance(maybe_ollama_stats, dict) else {}
         eval_count = int(ollama_stats.get("eval_count") or 0)
-        if not reply and thinking and eval_count >= num_predict:
+        if num_predict > 0 and not reply and thinking and eval_count >= num_predict:
             reason = (
                 "La IA no entrego JSON final: se alcanzo el limite de salida "
                 f"({num_predict} tokens)."
@@ -325,7 +329,10 @@ def _build_ports_payload(change_request: ChangeRequest) -> list[dict]:
 
 def _deploy_change_request(change_request: ChangeRequest, request_user=None) -> tuple[dict, int]:
     if change_request.status != ChangeRequest.STATUS_APPROVED:
-        return {"status": "error", "message": "invalid status"}, 400
+        return {
+            "status": "error",
+            "message": (f"invalid status: expected APPROVED, got {change_request.status}"),
+        }, 400
     device = change_request.device
     inventory_path = os.environ.get(
         "NETAUTO_INVENTORY",
@@ -483,7 +490,10 @@ def _deploy_change_request(change_request: ChangeRequest, request_user=None) -> 
 
 def _ai_approve_and_deploy(change_request: ChangeRequest, request_user=None) -> tuple[dict, int]:
     if change_request.status != ChangeRequest.STATUS_PENDING:
-        return {"status": "error", "message": "invalid status"}, 400
+        return {
+            "status": "error",
+            "message": (f"invalid status: expected PENDING, got {change_request.status}"),
+        }, 400
 
     trace: list[dict[str, object]] = [
         {
