@@ -337,7 +337,7 @@ class DeviceOpsUiView(View):
         .replace(/'/g, '&#039;');
       const crApi = '/audit/change-requests/';
       const approveApi = (id) => `/audit/change-requests/${id}/approve/`;
-      const deployApi = (id) => `/audit/change-requests/${id}/ai-approve-deploy/`;
+      const deployApi = (id) => `/audit/change-requests/${id}/deploy/`;
       const resultsApi = (id) => `/audit/change-requests/${id}/results/`;
       const aiDashboardApi = '/audit/ai-dashboard/?limit=40';
       const aiBatchAsyncApi = '/audit/change-requests/ai-approve-deploy/async/';

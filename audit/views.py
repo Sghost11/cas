@@ -633,6 +633,14 @@ class ChangeRequestDeployView(View):
     def post(self, request: HttpRequest, pk: int) -> HttpResponse:
         change_request = ChangeRequest.objects.get(pk=pk)
         user = request.user if request.user.is_authenticated else None
+        if change_request.status == ChangeRequest.STATUS_PENDING:
+            change_request.status = ChangeRequest.STATUS_APPROVED
+            change_request.save(update_fields=["status"])
+            ChangeApproval.objects.create(
+                change_request=change_request,
+                approved_by=user,
+                comments="Aprobado automaticamente desde despliegue manual.",
+            )
         payload, status = _deploy_change_request(change_request, request_user=user)
         return JsonResponse(payload, status=status)
 
