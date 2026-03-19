@@ -1110,7 +1110,9 @@ class JobListView(View):
             }
             break
 
-        return JsonResponse(latest_job or {})
+        response = JsonResponse(latest_job or {})
+        response["Access-Control-Allow-Origin"] = "*"
+        return response
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -1145,7 +1147,9 @@ class JobStatusView(View):
             "progress": meta,
             "result": result.result if result.ready() else None,
         }
-        return JsonResponse({"status": "ok", "task": payload})
+        response = JsonResponse({"status": "ok", "task": payload})
+        response["Access-Control-Allow-Origin"] = "*"
+        return response
 
 
 def _tcp_check(host: str, port: int, timeout: float = 2.0) -> bool:
