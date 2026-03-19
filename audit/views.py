@@ -32,6 +32,7 @@ from audit.models import (
 from accounts.models import ApiToken
 from devices.models import Device, Port
 from devices.services import sync_device
+from netauto.celery import app as celery_app
 from netauto.automation import run_playbook
 from validator.config_generator import generate_config
 
@@ -160,15 +161,30 @@ def _extract_json_object(text: str) -> dict | None:
         return None
 
 
+def _env_enabled(name: str, default: bool = True) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bool, str, dict]:
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     model = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
     timeout = float(os.environ.get("OLLAMA_TIMEOUT", "20"))
     num_predict = int(os.environ.get("OLLAMA_NUM_PREDICT", "80"))
+    config_max_lines = int(os.environ.get("OLLAMA_CONFIG_MAX_LINES", "80"))
+    think_enabled = os.environ.get("OLLAMA_THINK", "true").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
     meta: dict[str, object] = {
         "provider": "ollama",
         "model": model,
         "base_url": base_url,
+        "thinking_enabled": think_enabled,
     }
     if num_predict <= 0:
         meta["num_predict"] = "unlimited"
@@ -181,12 +197,24 @@ def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bo
             {
                 "interface": port.get("interface"),
                 "action": port.get("action"),
-                "reason": port.get("reason"),
                 "vlan": port.get("vlan"),
                 "mode": port.get("mode"),
-                "description": port.get("description"),
             }
         )
+
+    config_lines = change_request.generated_config.splitlines()
+    if config_max_lines > 0 and len(config_lines) > config_max_lines:
+        config_for_prompt = "\n".join(config_lines[:config_max_lines])
+        config_for_prompt += (
+            f"\n... (truncado, {len(config_lines) - config_max_lines} lineas omitidas)"
+        )
+        meta["config_truncated"] = True
+        meta["config_total_lines"] = len(config_lines)
+        meta["config_used_lines"] = config_max_lines
+    else:
+        config_for_prompt = change_request.generated_config
+        meta["config_truncated"] = False
+        meta["config_total_lines"] = len(config_lines)
 
     prompt = (
         "Eres un analista senior de redes. Responde SOLO JSON estrictamente con "
@@ -198,18 +226,20 @@ def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bo
         f"Sitio: {change_request.site}\n"
         f"Puertos: {json.dumps(port_payload, ensure_ascii=True)}\n"
         "Config generada:\n"
-        f"{change_request.generated_config}\n"
+        f"{config_for_prompt}\n"
     )
 
     payload_dict: dict[str, object] = {
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "think": think_enabled,
     }
+    options: dict[str, object] = {}
     if num_predict > 0:
-        payload_dict["options"] = {
-            "num_predict": num_predict,
-        }
+        options["num_predict"] = num_predict
+    if options:
+        payload_dict["options"] = options
     payload = json.dumps(payload_dict).encode("utf-8")
     request = urllib.request.Request(
         f"{base_url}/api/generate",
@@ -344,26 +374,29 @@ def _deploy_change_request(change_request: ChangeRequest, request_user=None) -> 
             "status": "error",
             "message": f"Dispositivo sin conectividad (SSH {ssh_port} no responde).",
         }, 503
-    snapshot_result = run_playbook(
-        playbook="snapshot_running_config.yml",
-        extra_vars={},
-        device_ip=device.ip,
-        limit=device.hostname or device.ip,
-    )
+    enable_snapshots = _env_enabled("NETAUTO_ENABLE_SNAPSHOTS", True)
+    snapshot_result = {"rc": 0}
     snapshot_path = f"/tmp/{device.hostname}-running.txt"
     running_config = ""
-    if snapshot_result.get("rc") == 0:
-        try:
-            with open(snapshot_path, "r", encoding="utf-8", errors="ignore") as handle:
-                running_config = handle.read()
-        except FileNotFoundError:
-            running_config = ""
-    if running_config:
-        ConfigSnapshot.objects.create(
-            change_request=change_request,
-            device=device,
-            running_config=running_config,
+    if enable_snapshots:
+        snapshot_result = run_playbook(
+            playbook="snapshot_running_config.yml",
+            extra_vars={},
+            device_ip=device.ip,
+            limit=device.hostname or device.ip,
         )
+        if snapshot_result.get("rc") == 0:
+            try:
+                with open(snapshot_path, "r", encoding="utf-8", errors="ignore") as handle:
+                    running_config = handle.read()
+            except FileNotFoundError:
+                running_config = ""
+        if running_config:
+            ConfigSnapshot.objects.create(
+                change_request=change_request,
+                device=device,
+                running_config=running_config,
+            )
     enable_password = os.environ.get("SWITCH_ENABLE", "").strip()
     extra_vars = {"config_lines": change_request.generated_config.splitlines()}
     if enable_password:
@@ -375,7 +408,7 @@ def _deploy_change_request(change_request: ChangeRequest, request_user=None) -> 
         limit=device.hostname or device.ip,
     )
     success = result.get("rc") == 0
-    if success:
+    if success and enable_snapshots:
         after_result = run_playbook(
             playbook="snapshot_running_config.yml",
             extra_vars={},
@@ -474,7 +507,8 @@ def _deploy_change_request(change_request: ChangeRequest, request_user=None) -> 
                 updated_fields.append("updated_at")
             port.save(update_fields=updated_fields)
 
-        sync_device(device)
+        if _env_enabled("NETAUTO_ENABLE_POST_DEPLOY_SYNC", True):
+            sync_device(device)
 
     if not success:
         message = "Error en deploy."
@@ -821,13 +855,28 @@ class ChangeRequestAiApproveDeployEnvelopeView(View):
 class ChangeRequestAiApproveDeployBatchView(View):
     def post(self, request: HttpRequest) -> HttpResponse:
         user = request.user if request.user.is_authenticated else None
-        payload = _run_ai_batch(request_user=user)
+        interface_filter = None
+        raw = request.body.decode("utf-8", errors="ignore").strip()
+        if raw:
+            try:
+                data = json.loads(raw)
+                maybe_interface = (data.get("interface") or "").strip()
+                interface_filter = maybe_interface or None
+            except json.JSONDecodeError:
+                interface_filter = None
+        payload = _run_ai_batch(request_user=user, interface_filter=interface_filter)
         return JsonResponse(payload)
 
 
-def _run_ai_batch(request_user=None, progress_callback=None) -> dict:
+def _run_ai_batch(
+    request_user=None, progress_callback=None, interface_filter: str | None = None
+) -> dict:
     today = timezone.localdate()
+    if not interface_filter:
+        default_interface = os.environ.get("NETAUTO_BATCH_INTERFACE", "").strip()
+        interface_filter = default_interface or None
     devices = list(Device.objects.order_by("id"))
+    enable_batch_sync = _env_enabled("NETAUTO_ENABLE_BATCH_SYNC", True)
     results = []
     total = max(len(devices), 1)
 
@@ -842,41 +891,63 @@ def _run_ai_batch(request_user=None, progress_callback=None) -> dict:
                 "sync",
                 {"device": device.hostname, "message": "Sincronizando dispositivo"},
             )
-        sync_result, _ports = sync_device(device)
-        sync_ok = sync_result.get("rc") == 0
-        if sync_ok:
-            device.last_sync = timezone.now()
-            device.save(update_fields=["last_sync"])
-        elif progress_callback:
-            progress_callback(
-                min(base_pct + 10, 99),
-                "sync_failed_continue",
-                {
-                    "device": device.hostname,
-                    "message": "Sync fallo, continuando con estado en base de datos",
-                },
-            )
+        if enable_batch_sync:
+            sync_result, _ports = sync_device(device)
+            sync_ok = sync_result.get("rc") == 0
+            if sync_ok:
+                device.last_sync = timezone.now()
+                device.save(update_fields=["last_sync"])
+            elif progress_callback:
+                progress_callback(
+                    min(base_pct + 10, 99),
+                    "sync_failed_continue",
+                    {
+                        "device": device.hostname,
+                        "message": "Sync fallo, continuando con estado en base de datos",
+                    },
+                )
+        else:
+            sync_result = {
+                "status": "skipped",
+                "rc": 0,
+                "message": "Sync deshabilitado por NETAUTO_ENABLE_BATCH_SYNC",
+            }
+            sync_ok = True
 
         ports = list(Port.objects.filter(device=device).order_by("interface"))
-        migrate_ports = [
-            port for port in ports if (port.validation_action or "").upper() == "MIGRAR"
-        ]
+        if interface_filter:
+            selected_ports = [
+                port for port in ports if (port.interface or "").lower() == interface_filter.lower()
+            ]
+        else:
+            selected_ports = [
+                port for port in ports if (port.validation_action or "").upper() == "MIGRAR"
+            ]
         if progress_callback:
             progress_callback(
                 min(base_pct + 25, 99),
                 "analyze_ports",
                 {
                     "device": device.hostname,
-                    "message": f"Puertos MIGRAR: {len(migrate_ports)}",
+                    "message": (
+                        f"Interfaces objetivo: {len(selected_ports)}"
+                        if interface_filter
+                        else f"Puertos MIGRAR: {len(selected_ports)}"
+                    ),
                 },
             )
-        if not migrate_ports:
+        if not selected_ports:
             status = "skipped" if sync_ok else "sync_failed_no_candidates"
+            reason = (
+                f"interface {interface_filter} no encontrada"
+                if interface_filter
+                else "sin puertos MIGRAR"
+            )
             results.append(
                 {
                     "device": device.hostname,
                     "status": status,
-                    "reason": "sin puertos MIGRAR",
+                    "reason": reason,
                     "sync": {
                         "ok": sync_ok,
                         "result": sync_result,
@@ -892,7 +963,7 @@ def _run_ai_batch(request_user=None, progress_callback=None) -> dict:
             continue
 
         ports_payload = []
-        for port in migrate_ports:
+        for port in selected_ports:
             ports_payload.append(
                 {
                     "interface": port.interface,
@@ -954,7 +1025,19 @@ class ChangeRequestAiApproveDeployBatchAsyncView(View):
         from audit.tasks import ai_approve_deploy_batch_task
 
         user_id = request.user.id if request.user.is_authenticated else None
-        task = ai_approve_deploy_batch_task.delay(user_id=user_id)
+        interface_filter = None
+        raw = request.body.decode("utf-8", errors="ignore").strip()
+        if raw:
+            try:
+                data = json.loads(raw)
+                maybe_interface = (data.get("interface") or "").strip()
+                interface_filter = maybe_interface or None
+            except json.JSONDecodeError:
+                interface_filter = None
+        task = ai_approve_deploy_batch_task.delay(
+            user_id=user_id,
+            interface_filter=interface_filter,
+        )
         return JsonResponse({"status": "ok", "task_id": task.id})
 
 
@@ -1035,9 +1118,28 @@ class JobStatusView(View):
     def get(self, request: HttpRequest, task_id: str) -> HttpResponse:
         result = AsyncResult(task_id)
         meta = result.info if isinstance(result.info, dict) else None
+        status = result.status
+        if status == "PENDING":
+            try:
+                inspector = celery_app.control.inspect(timeout=1)
+                active = inspector.active() or {}
+                is_active = any(
+                    any(task.get("id") == task_id for task in (tasks or []))
+                    for tasks in active.values()
+                )
+                if is_active:
+                    status = "RUNNING"
+                    if not meta:
+                        meta = {
+                            "percent": 1,
+                            "stage": "running",
+                            "message": "Tarea en ejecucion (worker activo)",
+                        }
+            except Exception:
+                pass
         payload = {
             "id": task_id,
-            "status": result.status,
+            "status": status,
             "ready": result.ready(),
             "successful": result.successful() if result.ready() else None,
             "progress": meta,

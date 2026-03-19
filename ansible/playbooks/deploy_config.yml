@@ -22,10 +22,11 @@
     - name: Apply config lines
       ansible.builtin.shell: |
         printf '%b' "{{ cli_payload }}\n" | \
-        sshpass -e ssh -tt \
+        timeout {{ lookup('env', 'NETAUTO_DEPLOY_TIMEOUT') | default('600', true) }}s sshpass -e ssh -tt \
           -p {{ ansible_port | default(22) }} \
           -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=10 \
           -o KexAlgorithms=+diffie-hellman-group1-sha1 \
           -o HostKeyAlgorithms=+ssh-rsa \
           -o Ciphers=+aes128-cbc \

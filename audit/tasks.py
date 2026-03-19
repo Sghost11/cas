@@ -5,7 +5,11 @@ from django.contrib.auth import get_user_model
 
 
 @shared_task(bind=True)
-def ai_approve_deploy_batch_task(self, user_id: int | None = None) -> dict:
+def ai_approve_deploy_batch_task(
+    self,
+    user_id: int | None = None,
+    interface_filter: str | None = None,
+) -> dict:
     user = None
     if user_id:
         user_model = get_user_model()
@@ -20,6 +24,10 @@ def ai_approve_deploy_batch_task(self, user_id: int | None = None) -> dict:
     from audit.views import _run_ai_batch
 
     progress(0, "start", {"message": "Iniciando batch IA"})
-    result = _run_ai_batch(request_user=user, progress_callback=progress)
+    result = _run_ai_batch(
+        request_user=user,
+        progress_callback=progress,
+        interface_filter=interface_filter,
+    )
     progress(100, "done", {"message": "Batch IA finalizado"})
     return result
