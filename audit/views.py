@@ -253,7 +253,21 @@ def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bo
     verdict_source = reply or thinking
     verdict = _extract_json_object(verdict_source) or {}
     approve = bool(verdict.get("approve"))
-    reason = verdict.get("reason") or "Sin razon detallada."
+    if verdict.get("reason"):
+        reason = str(verdict.get("reason"))
+    else:
+        maybe_ollama_stats = meta.get("ollama_stats")
+        ollama_stats = maybe_ollama_stats if isinstance(maybe_ollama_stats, dict) else {}
+        eval_count = int(ollama_stats.get("eval_count") or 0)
+        if not reply and thinking and eval_count >= num_predict:
+            reason = (
+                "La IA no entrego JSON final: se alcanzo el limite de salida "
+                f"({num_predict} tokens)."
+            )
+        elif not reply and thinking:
+            reason = "La IA solo devolvio thinking y no respuesta final en JSON."
+        else:
+            reason = "Sin razon detallada."
     return approve, reason, meta
 
 
@@ -924,6 +938,78 @@ class ChangeRequestAiApproveDeployBatchAsyncView(View):
         user_id = request.user.id if request.user.is_authenticated else None
         task = ai_approve_deploy_batch_task.delay(user_id=user_id)
         return JsonResponse({"status": "ok", "task_id": task.id})
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class JobListView(View):
+    def get(self, request: HttpRequest) -> HttpResponse:
+        items = DeploymentResult.objects.select_related(
+            "change_request", "change_request__device"
+        ).order_by("-deployed_at")[:200]
+
+        latest_job = None
+        for item in items:
+            ansible_payload, ai_meta, ai_trace = _extract_ai_metrics(item.ansible_output or "")
+            ai_decision = (
+                ansible_payload.get("ai_decision") if isinstance(ansible_payload, dict) else None
+            )
+            if not isinstance(ai_decision, dict):
+                continue
+
+            started_at = (
+                ai_trace[0].get("ts") if ai_trace and isinstance(ai_trace[0], dict) else None
+            )
+            ended_at = (
+                ai_trace[-1].get("ts") if ai_trace and isinstance(ai_trace[-1], dict) else None
+            )
+            started_dt = _parse_iso_datetime(started_at)
+            ended_dt = _parse_iso_datetime(ended_at)
+            total_minutes = None
+            if started_dt and ended_dt:
+                total_minutes = (ended_dt - started_dt).total_seconds() / 60.0
+
+            maybe_stats = ai_meta.get("ollama_stats") if isinstance(ai_meta, dict) else None
+            stats = maybe_stats if isinstance(maybe_stats, dict) else {}
+            input_tokens = int(stats.get("prompt_eval_count") or 0)
+            output_tokens = int(stats.get("eval_count") or 0)
+
+            final_reply = ai_decision.get("reason") or "Sin razon detallada."
+            status_text = (
+                "success" if bool(ai_decision.get("approve")) and item.success else "error"
+            )
+            error_text = None if status_text == "success" else final_reply
+
+            user_message = (
+                f"Autorizacion IA para CR #{item.change_request_id} "
+                f"en {item.change_request.device.hostname}"
+            )
+            latest_job = {
+                "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"netauto-cr-{item.change_request_id}")),
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "total_time": total_minutes,
+                "user_message": user_message,
+                "final_reply": final_reply,
+                "status": status_text,
+                "error_text": error_text,
+                "total_input_tokens": input_tokens,
+                "total_output_tokens": output_tokens,
+                "events": _build_agent_event_list(
+                    {
+                        "ai_trace": ai_trace,
+                        "ai_meta": ai_meta,
+                        "change_request_id": item.change_request_id,
+                        "result": ansible_payload.get("result")
+                        if isinstance(ansible_payload, dict)
+                        else None,
+                    },
+                    started_at,
+                    ended_at,
+                ),
+            }
+            break
+
+        return JsonResponse(latest_job or {})
 
 
 @method_decorator(csrf_exempt, name="dispatch")

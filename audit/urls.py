@@ -54,5 +54,6 @@ urlpatterns = [
         views.ChangeRequestDiffView.as_view(),
         name="change_request_diff",
     ),
+    path("jobs/", views.JobListView.as_view(), name="job_list"),
     path("jobs/<str:task_id>/", views.JobStatusView.as_view(), name="job_status"),
 ]
