@@ -61,6 +61,12 @@ http://<SERVER-IP>:8000/devices/ui/ops/
 http://<SERVER-IP>:8000/audit/ai-dashboard/
 ```
 
+## Full reset after changing .env
+
+```bash
+./reset_all.sh
+```
+
 ## Kubernetes (offline / sin registry)
 
 1) Carga de imagenes en el nodo:
