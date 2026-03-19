@@ -168,6 +168,14 @@ def _env_enabled(name: str, default: bool = True) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _with_cors(response: HttpResponse) -> HttpResponse:
+    response["Access-Control-Allow-Origin"] = "*"
+    response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    response["Access-Control-Max-Age"] = "86400"
+    return response
+
+
 def _ollama_decide(change_request: ChangeRequest, ports: list[dict]) -> tuple[bool, str, dict]:
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     model = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
@@ -1110,9 +1118,10 @@ class JobListView(View):
             }
             break
 
-        response = JsonResponse(latest_job or {})
-        response["Access-Control-Allow-Origin"] = "*"
-        return response
+        return _with_cors(JsonResponse(latest_job or {}))
+
+    def options(self, request: HttpRequest) -> HttpResponse:
+        return _with_cors(HttpResponse(status=204))
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -1147,9 +1156,10 @@ class JobStatusView(View):
             "progress": meta,
             "result": result.result if result.ready() else None,
         }
-        response = JsonResponse({"status": "ok", "task": payload})
-        response["Access-Control-Allow-Origin"] = "*"
-        return response
+        return _with_cors(JsonResponse({"status": "ok", "task": payload}))
+
+    def options(self, request: HttpRequest, task_id: str) -> HttpResponse:
+        return _with_cors(HttpResponse(status=204))
 
 
 def _tcp_check(host: str, port: int, timeout: float = 2.0) -> bool:
