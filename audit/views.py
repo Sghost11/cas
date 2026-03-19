@@ -629,62 +629,142 @@ class ChangeRequestAiApproveDeployView(View):
 @method_decorator(csrf_exempt, name="dispatch")
 class ChangeRequestAiApproveDeployBatchView(View):
     def post(self, request: HttpRequest) -> HttpResponse:
-        today = timezone.localdate()
-        devices = Device.objects.filter(Q(last_sync__isnull=True) | Q(last_sync__date__lt=today))
-        results = []
         user = request.user if request.user.is_authenticated else None
+        payload = _run_ai_batch(request_user=user)
+        return JsonResponse(payload)
 
-        for device in devices:
-            sync_result, _ports = sync_device(device)
-            if sync_result.get("rc") != 0:
-                results.append(
-                    {
-                        "device": device.hostname,
-                        "status": "sync_failed",
-                        "result": sync_result,
-                    }
-                )
-                continue
-            device.last_sync = timezone.now()
-            device.save(update_fields=["last_sync"])
 
-            ports = list(Port.objects.filter(device=device).order_by("interface"))
-            migrate_ports = [
-                port for port in ports if (port.validation_action or "").upper() == "MIGRAR"
-            ]
-            if not migrate_ports:
-                results.append(
-                    {
-                        "device": device.hostname,
-                        "status": "skipped",
-                        "reason": "sin puertos MIGRAR",
-                    }
-                )
-                continue
+def _run_ai_batch(request_user=None, progress_callback=None) -> dict:
+    today = timezone.localdate()
+    devices = list(
+        Device.objects.filter(Q(last_sync__isnull=True) | Q(last_sync__date__lt=today)).order_by(
+            "id"
+        )
+    )
+    results = []
+    total = max(len(devices), 1)
 
-            ports_payload = []
-            for port in migrate_ports:
-                ports_payload.append(
-                    {
-                        "interface": port.interface,
-                        "description": port.description or "",
-                        "vlan": port.vlan if port.vlan is not None else 10,
-                        "mode": "access",
-                        "template_name": "STANDARD_8021X",
-                    }
-                )
-            change_request = _create_change_request_for_device(device, ports_payload)
-            payload, status = _ai_approve_and_deploy(change_request, request_user=user)
+    if progress_callback:
+        progress_callback(0, "start", {"total_devices": len(devices)})
+
+    for idx, device in enumerate(devices, start=1):
+        base_pct = int(((idx - 1) / total) * 100)
+        if progress_callback:
+            progress_callback(
+                base_pct,
+                "sync",
+                {"device": device.hostname, "message": "Sincronizando dispositivo"},
+            )
+        sync_result, _ports = sync_device(device)
+        if sync_result.get("rc") != 0:
             results.append(
                 {
                     "device": device.hostname,
-                    "change_request": change_request.id,
-                    "http_status": status,
-                    "result": payload,
+                    "status": "sync_failed",
+                    "result": sync_result,
                 }
             )
+            if progress_callback:
+                progress_callback(
+                    min(base_pct + 10, 99),
+                    "sync_failed",
+                    {"device": device.hostname, "message": "Sync fallo"},
+                )
+            continue
 
-        return JsonResponse({"status": "ok", "date": str(today), "results": results})
+        device.last_sync = timezone.now()
+        device.save(update_fields=["last_sync"])
+
+        ports = list(Port.objects.filter(device=device).order_by("interface"))
+        migrate_ports = [
+            port for port in ports if (port.validation_action or "").upper() == "MIGRAR"
+        ]
+        if progress_callback:
+            progress_callback(
+                min(base_pct + 25, 99),
+                "analyze_ports",
+                {
+                    "device": device.hostname,
+                    "message": f"Puertos MIGRAR: {len(migrate_ports)}",
+                },
+            )
+        if not migrate_ports:
+            results.append(
+                {
+                    "device": device.hostname,
+                    "status": "skipped",
+                    "reason": "sin puertos MIGRAR",
+                }
+            )
+            if progress_callback:
+                progress_callback(
+                    min(base_pct + 35, 99),
+                    "skipped",
+                    {"device": device.hostname, "message": "Sin puertos candidatos"},
+                )
+            continue
+
+        ports_payload = []
+        for port in migrate_ports:
+            ports_payload.append(
+                {
+                    "interface": port.interface,
+                    "description": port.description or "",
+                    "vlan": port.vlan if port.vlan is not None else 10,
+                    "mode": "access",
+                    "template_name": "STANDARD_8021X",
+                }
+            )
+        if progress_callback:
+            progress_callback(
+                min(base_pct + 45, 99),
+                "create_cr",
+                {"device": device.hostname, "message": "Creando change request"},
+            )
+        change_request = _create_change_request_for_device(device, ports_payload)
+        if progress_callback:
+            progress_callback(
+                min(base_pct + 60, 99),
+                "ai_approval",
+                {
+                    "device": device.hostname,
+                    "message": f"Evaluando CR #{change_request.id} con IA",
+                    "change_request": change_request.id,
+                },
+            )
+        payload, status = _ai_approve_and_deploy(change_request, request_user=request_user)
+        results.append(
+            {
+                "device": device.hostname,
+                "change_request": change_request.id,
+                "http_status": status,
+                "result": payload,
+            }
+        )
+        if progress_callback:
+            progress_callback(
+                min(base_pct + 95, 99),
+                "device_done",
+                {
+                    "device": device.hostname,
+                    "message": f"Dispositivo completado (CR #{change_request.id})",
+                    "change_request": change_request.id,
+                },
+            )
+
+    if progress_callback:
+        progress_callback(100, "done", {"processed_devices": len(devices)})
+    return {"status": "ok", "date": str(today), "results": results}
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ChangeRequestAiApproveDeployBatchAsyncView(View):
+    def post(self, request: HttpRequest) -> HttpResponse:
+        from audit.tasks import ai_approve_deploy_batch_task
+
+        user_id = request.user.id if request.user.is_authenticated else None
+        task = ai_approve_deploy_batch_task.delay(user_id=user_id)
+        return JsonResponse({"status": "ok", "task_id": task.id})
 
 
 @method_decorator(csrf_exempt, name="dispatch")

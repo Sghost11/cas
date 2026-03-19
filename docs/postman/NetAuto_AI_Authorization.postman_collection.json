@@ -1,0 +1,398 @@
+{
+  "info": {
+    "_postman_id": "5f82f0cf-3f2f-4a95-9fd4-6a6f8f3180d3",
+    "name": "NetAuto AI Authorization",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Collection para operar NetAuto (sync, validate, CR, deploy IA, dashboard)."
+  },
+  "item": [
+    {
+      "name": "01 - Health",
+      "item": [
+        {
+          "name": "UI Ops",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/devices/ui/ops/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "ui",
+                "ops",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Devices",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.devices && data.devices.length > 0) {",
+                  "  pm.environment.set('device_id', data.devices[0].id);",
+                  "}",
+                  "pm.test('status ok', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/devices/db/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "db",
+                ""
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Device Ops",
+      "item": [
+        {
+          "name": "Sync Device (async)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.task_id) { pm.environment.set('task_id', data.task_id); }",
+                  "pm.test('sync accepted', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/devices/{{device_id}}/sync/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "{{device_id}}",
+                "sync",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Validate Device (async)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.task_id) { pm.environment.set('task_id', data.task_id); }",
+                  "pm.test('validate accepted', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/devices/{{device_id}}/validate/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "{{device_id}}",
+                "validate",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Job Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/audit/jobs/{{task_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit",
+                "jobs",
+                "{{task_id}}",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Ports",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/devices/{{device_id}}/ports/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "devices",
+                "{{device_id}}",
+                "ports",
+                ""
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Change Requests",
+      "item": [
+        {
+          "name": "Create CR",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.id) { pm.environment.set('cr_id', data.id); }",
+                  "pm.test('CR created', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{device_id}},\n  \"ports\": [\n    {\n      \"interface\": \"{{port_interface}}\",\n      \"description\": \"{{port_description}}\",\n      \"vlan\": {{port_vlan}},\n      \"mode\": \"access\",\n      \"template_name\": \"STANDARD_8021X\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/audit/change-requests/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit",
+                "change-requests",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Approve CR (analyst)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comments\": \"Aprobado manual en Postman\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/audit/change-requests/{{cr_id}}/approve/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit",
+                "change-requests",
+                "{{cr_id}}",
+                "approve",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deploy CR (manual)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/audit/change-requests/{{cr_id}}/deploy/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit",
+                "change-requests",
+                "{{cr_id}}",
+                "deploy",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "AI Approve + Deploy (single CR)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/audit/change-requests/{{cr_id}}/ai-approve-deploy/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit",
+                "change-requests",
+                "{{cr_id}}",
+                "ai-approve-deploy",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "CR Results",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/audit/change-requests/{{cr_id}}/results/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit",
+                "change-requests",
+                "{{cr_id}}",
+                "results",
+                ""
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - AI Dashboard",
+      "item": [
+        {
+          "name": "AI Batch Approve + Deploy",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/audit/change-requests/ai-approve-deploy/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit",
+                "change-requests",
+                "ai-approve-deploy",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "AI Dashboard (summary)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/audit/ai-dashboard/?limit={{dashboard_limit}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit",
+                "ai-dashboard",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "{{dashboard_limit}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "device_id",
+      "value": "1"
+    },
+    {
+      "key": "task_id",
+      "value": ""
+    },
+    {
+      "key": "cr_id",
+      "value": ""
+    },
+    {
+      "key": "port_interface",
+      "value": "Gi1/1/2"
+    },
+    {
+      "key": "port_description",
+      "value": "Postman-Test"
+    },
+    {
+      "key": "port_vlan",
+      "value": "10"
+    },
+    {
+      "key": "dashboard_limit",
+      "value": "40"
+    }
+  ]
+}

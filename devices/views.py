@@ -288,8 +288,10 @@ class DeviceOpsUiView(View):
                 <h4>Dashboard Agentes IA</h4>
                 <p class=\"muted\">Solo autorizacion IA: tokens, estado, tiempos y resultado por tarea.</p>
                 <div class=\"ops-inline\">
+                  <button class=\"primary\" id=\"runAiBatchBtn\">Ejecutar todo</button>
                   <button class=\"ghost\" id=\"refreshAiDashboardBtn\">Actualizar</button>
                 </div>
+                <div class=\"ai-run-state\" id=\"aiRunState\">Sin ejecucion activa.</div>
                 <div class=\"ai-summary\" id=\"aiSummary\"></div>
                 <div class=\"ai-table-wrap\">
                   <table class=\"ai-table\">
@@ -338,6 +340,7 @@ class DeviceOpsUiView(View):
       const deployApi = (id) => `/audit/change-requests/${id}/ai-approve-deploy/`;
       const resultsApi = (id) => `/audit/change-requests/${id}/results/`;
       const aiDashboardApi = '/audit/ai-dashboard/?limit=40';
+      const aiBatchAsyncApi = '/audit/change-requests/ai-approve-deploy/async/';
 
       const deviceList = document.getElementById('deviceList');
       const portsTable = document.getElementById('portsTable');
@@ -372,7 +375,9 @@ class DeviceOpsUiView(View):
       const kpiMigrated = document.getElementById('kpiMigrated');
       const historyMeta = document.getElementById('historyMeta');
       const historyList = document.getElementById('historyList');
+      const runAiBatchBtn = document.getElementById('runAiBatchBtn');
       const refreshAiDashboardBtn = document.getElementById('refreshAiDashboardBtn');
+      const aiRunState = document.getElementById('aiRunState');
       const aiDashboardTable = document.getElementById('aiDashboardTable');
       const aiSummary = document.getElementById('aiSummary');
       const statusBanner = document.getElementById('statusBanner');
@@ -495,6 +500,29 @@ class DeviceOpsUiView(View):
         } finally {
           setBusy(refreshAiDashboardBtn, false);
         }
+      };
+
+      const pollAiBatchJob = async (taskId) => {
+        const started = Date.now();
+        while (Date.now() - started < 1800000) {
+          const job = await fetchJson(`/audit/jobs/${taskId}/`);
+          const progress = (job.task && job.task.progress) || {};
+          const percent = typeof progress.percent === 'number' ? progress.percent : 0;
+          const stage = progress.stage || (job.task && job.task.status) || 'running';
+          const device = progress.device ? ` · ${progress.device}` : '';
+          const message = progress.message ? ` · ${progress.message}` : '';
+          if (aiRunState) {
+            aiRunState.textContent = `Tarea ${taskId}: ${percent}% · ${stage}${device}${message}`;
+          }
+          if (job.task && job.task.ready) {
+            if (job.task.successful === false) {
+              throw new Error('La ejecucion batch de IA fallo');
+            }
+            return job.task.result;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+        throw new Error('Timeout esperando finalizacion del batch IA');
       };
 
       const fetchJson = async (url, options = {}) => {
@@ -1056,6 +1084,33 @@ class DeviceOpsUiView(View):
           setStatus(`Error cargando logs: ${err.message}`, 'error');
         } finally {
           setBusy(resultsBtn, false);
+        }
+      });
+
+      runAiBatchBtn.addEventListener('click', async () => {
+        setStatus('Iniciando ejecucion batch IA...', 'info');
+        setBusy(runAiBatchBtn, true, 'Ejecutando...');
+        try {
+          const start = await withTimeout(fetchJson(aiBatchAsyncApi, { method: 'POST' }));
+          const taskId = start.task_id;
+          if (aiRunState) {
+            aiRunState.textContent = `Tarea ${taskId} iniciada.`;
+          }
+          const result = await pollAiBatchJob(taskId);
+          logOutput.textContent = JSON.stringify(result, null, 2);
+          await loadAiDashboard();
+          setStatus('Batch IA finalizado.', 'success');
+          if (aiRunState) {
+            aiRunState.textContent = `Tarea ${taskId} finalizada.`;
+          }
+        } catch (err) {
+          const msg = err && err.message ? err.message : 'Error ejecutando batch IA';
+          if (aiRunState) {
+            aiRunState.textContent = msg;
+          }
+          setStatus(msg, 'error');
+        } finally {
+          setBusy(runAiBatchBtn, false);
         }
       });
 
