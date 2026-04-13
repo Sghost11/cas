@@ -147,6 +147,29 @@ curl -X POST http://localhost:8000/audit/change-requests/1/deploy/
 
 Deployment results and change logs are stored in PostgreSQL.
 
+## Casos de uso (actualizados)
+
+1) Migracion automatica de puertos elegibles (`MIGRAR`):
+
+- La IA autoriza y dispara deploy.
+- El dashboard reporta `deployed` cuando termina bien.
+
+2) Bloqueo seguro de puertos no elegibles (`EXCLUIR` / `REVISAR`):
+
+- No se despliega en red productiva.
+- El dashboard reporta `no_migrar` (no se cuenta como error tecnico).
+
+3) Monitoreo de jobs desde otros clientes web:
+
+- `GET /audit/jobs/`
+- `GET /audit/jobs/<task_id>/`
+- Ambos endpoints exponen cabeceras CORS para consumo cross-origin.
+
+4) Batch rapido por interfaz:
+
+- `NETAUTO_BATCH_INTERFACE=Gi1/1/1` para ejecutar sobre una interfaz objetivo.
+- Si se deja vacio, procesa candidatos `MIGRAR`.
+
 Fetch deployment results and change logs:
 
 ```bash

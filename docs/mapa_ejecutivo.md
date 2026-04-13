@@ -37,7 +37,9 @@ flowchart LR
 4. **Autorizacion**:
    - Manual por analista, o
    - Automatica por IA (con razon y trazas).
-5. **Despliegue**: Ansible aplica la configuracion en el switch.
+5. **Decision operativa**:
+   - Si aplica, se despliega en el switch.
+   - Si no aplica por politica, se marca como `no_migrar` (no es falla tecnica).
 6. **Evidencia**: se guarda diff, snapshots, logs, actor y resultado.
 
 ## 4) Donde entra la IA
@@ -76,3 +78,25 @@ flowchart LR
 ## 8) Mensaje ejecutivo (1 minuto)
 
 NetAuto reduce riesgo y tiempo operativo al estandarizar cambios de red con control tecnico y trazabilidad. La IA acelera autorizaciones repetitivas, mientras el analista mantiene control en casos sensibles. Cada cambio queda auditado de extremo a extremo para cumplimiento y continuidad operativa.
+
+## 9) Casos de uso actualizados
+
+1. **Migracion automatica segura**
+   - Entrada: puerto clasificado como `MIGRAR`.
+   - Flujo: IA evalua, aprueba y despliega.
+   - Salida esperada: estado `deployed`, evidencia completa y metricas de tiempo/tokens.
+
+2. **No migrar por politica de seguridad**
+   - Entrada: puertos `EXCLUIR`/`REVISAR` o rechazo por IA.
+   - Flujo: se bloquea despliegue productivo y se documenta la razon.
+   - Salida esperada: estado `no_migrar` (visible en verde en dashboard), sin contarlo como error tecnico.
+
+3. **Monitoreo operativo en tiempo real (NOC/mesa de ayuda)**
+   - Entrada: ejecucion batch async.
+   - Flujo: consulta de `/audit/jobs/` y `/audit/jobs/<task_id>/` para progreso y ultimo resultado.
+   - Salida esperada: seguimiento centralizado con CORS habilitado para consumo desde otros frontends.
+
+4. **Batch controlado por interfaz para acelerar ventana de cambio**
+   - Entrada: `NETAUTO_BATCH_INTERFACE` o `interface` en el request.
+   - Flujo: procesa una interfaz objetivo y evita barrido completo.
+   - Salida esperada: menor tiempo de ejecucion y menor riesgo operativo por alcance acotado.

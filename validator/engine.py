@@ -39,6 +39,13 @@ ACTION_TEMPLATE_MAP = {
 
 
 def analyze_port(port: PortConfig, site_name: str) -> ValidationResult:
+    description_upper = (port.description or "").upper()
+    cdp_upper = (port.cdp_neighbor or "").upper()
+    site_upper = (site_name or "").upper()
+    looks_like_ap = (
+        "AP" in description_upper or "WIFI" in description_upper or "WIRELESS" in description_upper
+    )
+
     if port.interface in {"Gi0/0", "GigabitEthernet0/0"}:
         return ValidationResult(
             action="EXCLUIR",
@@ -53,10 +60,35 @@ def analyze_port(port: PortConfig, site_name: str) -> ValidationResult:
             category="Soporte",
         )
 
-    if port.cdp_neighbor and ("Switch" in port.cdp_neighbor or "Router" in port.cdp_neighbor):
+    if "SWITCH" in cdp_upper or "ROUTER" in cdp_upper:
         return ValidationResult(
             action="EXCLUIR",
             reason="Enlace critico hacia Core o Distribucion.",
+            category="Infraestructura",
+        )
+
+    if looks_like_ap and port.mode == "trunk":
+        return ValidationResult(
+            action="REVISAR",
+            reason="AP en modo flex-connect sobre puerto troncal.",
+            category="Wireless",
+        )
+
+    if looks_like_ap and port.mode == "access":
+        if site_upper in LOCAL_CONTROLLER_SITES:
+            reason = "AP en modo local (sitio con controlador local): revisar puerto en acceso."
+        else:
+            reason = "AP en modo local sobre puerto en acceso."
+        return ValidationResult(
+            action="REVISAR",
+            reason=reason,
+            category="Wireless",
+        )
+
+    if port.mode == "trunk" and port.status != "up" and not port.cdp_neighbor:
+        return ValidationResult(
+            action="REVISAR",
+            reason="Puerto troncal sin evidencia de enlace activo: requiere revision.",
             category="Infraestructura",
         )
 
@@ -67,7 +99,14 @@ def analyze_port(port: PortConfig, site_name: str) -> ValidationResult:
             category="Infraestructura",
         )
 
-    if port.vlan == 123 or "COBAS" in port.description or "CAMARA" in port.description:
+    if port.mode == "access" and port.vlan == 99 and not looks_like_ap:
+        return ValidationResult(
+            action="EXCLUIR",
+            reason="Puerto ya opera en acceso VLAN 99.",
+            category="Estado",
+        )
+
+    if port.vlan == 123 or "COBAS" in description_upper or "CAMARA" in description_upper:
         return ValidationResult(
             action="EXCLUIR",
             reason="Red de terceros (CCTV/Control Acceso).",
@@ -118,8 +157,8 @@ def analyze_port(port: PortConfig, site_name: str) -> ValidationResult:
 
     if port.description and port.status == "down" and not port.cdp_neighbor:
         return ValidationResult(
-            action="MIGRAR",
-            reason="Ghost Port: Equipo retirado, puerto sucio.",
+            action="REVISAR",
+            reason="Ghost port: descripcion presente, enlace abajo y sin CDP.",
             category="Limpieza",
         )
 
